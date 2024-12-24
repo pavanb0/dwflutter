@@ -1,9 +1,14 @@
 import 'dart:async';
 
+import 'package:dwflutter/models/videoModel.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_downloader/flutter_downloader.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shimmer/shimmer.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:vibration/vibration.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class DownloadScreen extends StatefulWidget {
   const DownloadScreen({super.key, required this.url});
@@ -17,22 +22,18 @@ class _DownloadScreenState extends State<DownloadScreen> {
   bool isloadingThumbnail = true;
   bool isLoadingVideoUrl = true;
   bool isLoadingAudioUrl = true;
+  late final String? taskId;
 
   final yt = YoutubeExplode();
   late String thumbnail = "";
   late String title = "";
 
-  late Map<Uri, String> videoUrlRes = Map();
-  late Map<String, String> videoQualitSize = Map();
-  //late
-  late Map<Uri, String> audioUrlsBitrate = Map();
-  late Map<String, String> audioBitrateSize = Map();
+  late List<Videomodel> vidmodel = [];
+  late List<Audiomodel> audiomodel = [];
 
   void startdownload() async {
     try {
       var video = await yt.videos.get(widget.url);
-      //print('Title: ${video.title}');
-      //print('Thumbnail URL: ${video.thumbnails.highResUrl}');
       thumbnail = video.thumbnails.highResUrl;
       setState(() {
         isloadingThumbnail = false;
@@ -43,20 +44,40 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
       var videoStreams = manifest.video;
       for (var stream in videoStreams) {
-        videoUrlRes[stream.url] = stream.videoResolution.toString();
-        videoQualitSize[stream.videoQuality.toString()] =
-            stream.size.toString();
+        bool resolutionExists = vidmodel.any(
+            (video) => video.resolution == stream.videoResolution.toString());
+
+        if (!resolutionExists) {
+          Videomodel obj = Videomodel(
+            url: stream.url.toString(),
+            resolution: stream.videoResolution.toString(),
+            quality: stream.qualityLabel.toString(),
+            sizeMB: stream.size.totalMegaBytes.toString().substring(0, 4),
+          );
+
+          vidmodel.add(obj);
+        }
       }
+
       setState(() {
         isLoadingVideoUrl = false;
       });
       var audioStreams = manifest.audioOnly;
       for (var stream in audioStreams) {
-        // print(
-        //     'Audio Stream: ${stream.url} | Quality: ${stream.bitrate.kiloBitsPerSecond} kbps');
-        audioUrlsBitrate[stream.url] =
-            stream.bitrate.kiloBitsPerSecond.toString();
-        audioBitrateSize[stream.bitrate.toString()] = stream.size.toString();
+        // audioUrlsBitrate[stream.url] =
+        //     stream.bitrate.kiloBitsPerSecond.toString();
+        // audioBitrateSize[stream.bitrate.toString()] = stream.size.toString();
+        bool kbps = audiomodel.any((video) =>
+            video.kbps == stream.bitrate.kiloBitsPerSecond.toString());
+
+        if (!kbps) {
+          Audiomodel obj = Audiomodel(
+              url: stream.url.toString(),
+              kbps: stream.bitrate.kiloBitsPerSecond.toString(),
+              bitrate: stream.bitrate.toString(),
+              sizeMB: stream.size.toString());
+          audiomodel.add(obj);
+        }
       }
       setState(() {
         isLoadingAudioUrl = false;
@@ -67,6 +88,31 @@ class _DownloadScreenState extends State<DownloadScreen> {
     } finally {
       yt.close();
     }
+  }
+
+  Future<bool> requestPermissions() async {
+    if (await Permission.storage.request().isGranted) {
+      print("Storage permission granted.");
+      return true;
+    } else {
+      print("Storage permission denied.");
+      return false;
+    }
+  }
+
+  Future<void> startDownloadMedia(String url) async {
+    final directory = await getExternalStorageDirectory();
+    final filePath = "${directory!.path}/my_downloaded_file.ext";
+
+    taskId = await FlutterDownloader.enqueue(
+      url: url,
+      savedDir: directory.path,
+      fileName: "my_downloaded_file.ext",
+      showNotification: true,
+      openFileFromNotification: true,
+    );
+
+    print("Download started with Task ID: $taskId");
   }
 
   @override
@@ -229,27 +275,84 @@ class _DownloadScreenState extends State<DownloadScreen> {
                     ),
                   )
                 : ListView.builder(
-                    itemCount: videoUrlRes.length + audioUrlsBitrate.length,
+                    itemCount: vidmodel.length,
                     shrinkWrap: true,
                     physics: NeverScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(16),
                     itemBuilder: (context, index) {
+                      //var stream = vidmodel[index];
                       return Card(
                         child: ListTile(
-                          title: videoUrlRes.length < index
-                              ? Text("Video Stream ${videoQualitSize}")
-                              : Text("Audio Stream"),
-                          subtitle: Text("Download in your desired format"),
-                          trailing: Icon(
-                            videoUrlRes.length < index
-                                ? Icons.video_collection_outlined
-                                : Icons.audio_file_outlined,
+                          title: Text(
+                            "Video Resolution ${vidmodel[index].resolution} quality ${vidmodel[index].quality} ",
+                            softWrap: true,
+                          ),
+                          subtitle: Text(
+                              "download size ${vidmodel[index].sizeMB} Mb"),
+                          trailing: const Icon(
+                            Icons.video_collection_outlined,
                             size: 32,
                           ),
+                          onTap: () async {
+                            //openuribrowser(vidmodel[index].url);
+                            print(vidmodel[index].url.toString());
+                            Vibration.vibrate();
+                          },
                         ),
                       );
                     },
-                  )
+                  ),
+            Visibility(
+              visible: !isLoadingAudioUrl && isLoadingVideoUrl,
+              child: const Text(
+                "Audio formats",
+                style: TextStyle(color: Colors.blueAccent, fontSize: 18),
+              ),
+            ),
+            ListView.builder(
+              itemCount: audiomodel.length,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemBuilder: (context, index) {
+                //var stream = vidmodel[index];
+                return Card(
+                  child: ListTile(
+                    title: Text(
+                      "Audio quality ${audiomodel[index].bitrate} bitrate  ${audiomodel[index].kbps} channel  ",
+                      softWrap: true,
+                    ),
+                    subtitle: Text("download size ${audiomodel[0].sizeMB} Mb"),
+                    trailing: const Icon(
+                      Icons.audio_file_outlined,
+                      size: 32,
+                    ),
+                    onTap: () async {
+                      //openuribrowser(vidmodel[index].url);
+                      //print(audiomodel[index].url.toString());
+                      //print(audiomodel[index].url);
+
+                      try {
+                        // await FlutterDownloader.enqueue(
+                        //   url: audiomodel[index].url,
+                        //   savedDir: '/storage/emulated/0/Download',
+                        //   fileName: 'dw_audio_${audiomodel[index].bitrate}.mp3',
+                        //   showNotification: true,
+                        //   openFileFromNotification: true,
+                        // );
+                        bool permission = await requestPermissions();
+                        if (permission) {
+                          await startDownloadMedia(audiomodel[index].url);
+                        }
+                      } catch (c) {
+                        //print(c.toString());
+                      }
+                      await Vibration.vibrate();
+                    },
+                  ),
+                );
+              },
+            ),
           ]),
         ),
       ),
